@@ -57,6 +57,7 @@ class Indexer:
         embedder = HFEmbedder(embedder_config=config.embedder, device=device)
         self.chunker: ABCChunker = ChunkerFactory.create_chunker(config, embedder=embedder.get_embeddings())
         self.vectordb = ConnectorFactory.create_vdb(config, logger=logger, embeddings=embedder.get_embeddings())
+        self.logger = logger
         self.logger.info("Indexer initialized...")
 
 
