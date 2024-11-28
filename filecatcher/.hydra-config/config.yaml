@@ -11,7 +11,7 @@ embedder:
 llm:
   base_url: https://chat.ai.linagora.exaion.com/v1/
   name: meta-llama-31-8b-it
-  api_key: ''
+  api_key: ${oc.env:API_KEY}
   max_tokens: 1024
   temperature: 0.0
 
@@ -30,10 +30,11 @@ verbose:
   verbose: true
   level: INFO
 
+paths:
+  root_dir: ${oc.env:ROOT_DIR}
+  base_dir: ${oc.env:BASE_DIR}
+  prompts_dir: ${oc.env:PROMPTS_DIR}
+
 prompt:
   rag_sys_pmpt: rag_sys_prompt_template.txt # rag_sys_pmpt_tmpl_ifa.txt
   context_pmpt_tmpl: contextualize_prompt_template.txt
-
-
-dir_path: ''
-prompts_dir: ''

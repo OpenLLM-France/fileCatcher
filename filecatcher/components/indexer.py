@@ -55,6 +55,7 @@ class Indexer:
                 OmegaConf.update(config, key, value)
 
         embedder = HFEmbedder(embedder_config=config.embedder, device=device)
+        self.serializer = DocSerializer(root_dir=config.paths.root_dir)
         self.chunker: ABCChunker = ChunkerFactory.create_chunker(config, embedder=embedder.get_embeddings())
         self.vectordb = ConnectorFactory.create_vdb(config, logger=logger, embeddings=embedder.get_embeddings())
         self.logger = logger
@@ -63,9 +64,8 @@ class Indexer:
 
     async def add_files2vdb(self, path):
         """Add a files to the vector database in async mode"""
-        serializer = DocSerializer()
         try:
-            doc_generator: AsyncGenerator[Document, None] = serializer.serialize_documents(path, recursive=True)
+            doc_generator: AsyncGenerator[Document, None] = self.serializer.serialize_documents(path, recursive=True)
             await self.vectordb.async_add_documents(
                 doc_generator=doc_generator, 
                 chunker=self.chunker, 

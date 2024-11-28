@@ -1,12 +1,10 @@
 from abc import abstractmethod, ABC
 import asyncio
 from typing import Union
-from qdrant_client import QdrantClient, models
+from qdrant_client import QdrantClient
 from langchain_community.embeddings import HuggingFaceBgeEmbeddings, HuggingFaceEmbeddings
 from langchain_core.documents.base import Document
 from langchain_qdrant import QdrantVectorStore, FastEmbedSparse, RetrievalMode
-import torch
-import gc
 from .chunker import ABCChunker
 
 
@@ -41,7 +39,7 @@ class QdrantDB(ABCVectorDB):
             host, port, 
             embeddings: HuggingFaceBgeEmbeddings | HuggingFaceEmbeddings=None,
             collection_name: str = None, logger = None,
-            hybrid_mode=False,
+            hybrid_mode=True,
         ):
         """
         Initialize Qdrant_Connector.
@@ -52,55 +50,77 @@ class QdrantDB(ABCVectorDB):
             collection_name (str): The name of the collection in the Qdrant database.
             embeddings (list): The embeddings.
         """
-        self.collection_name = collection_name
+
         self.logger = logger
         self.embeddings: Union[HuggingFaceBgeEmbeddings, HuggingFaceEmbeddings] = embeddings
+        self.port = port
+        self.host = host
         self.client = QdrantClient(
             port=port, host=host,
             prefer_grpc=False,
         )
 
-        sparse_embeddings = FastEmbedSparse(model_name="Qdrant/bm25") if hybrid_mode else None
+        self.sparse_embeddings = FastEmbedSparse(model_name="Qdrant/bm25") if hybrid_mode else None
         self.retrieval_mode = RetrievalMode.HYBRID if hybrid_mode else RetrievalMode.DENSE
+        print("RETRIEVE MODE ==>", self.retrieval_mode)
         
-        if self.client.collection_exists(collection_name=collection_name):
+        # Initialize collection-related attributes
+        self._collection_name = None
+        self.vector_store = None
+
+        # Set the initial collection name (if provided)
+        if collection_name:
+            self.collection_name = collection_name
+        
+    @property
+    def collection_name(self):
+        return self._collection_name
+    
+    @collection_name.setter
+    def collection_name(self, name: str):
+        if not name:
+            raise ValueError("Collection name cannot be empty.")
+        
+        
+        if self.client.collection_exists(collection_name=name):
             self.vector_store = QdrantVectorStore(
                 client=self.client,
-                collection_name=collection_name,
-                embedding=embeddings,
-                sparse_embedding=sparse_embeddings,
+                collection_name=name,
+                embedding=self.embeddings,
+                sparse_embedding=self.sparse_embeddings,
                 retrieval_mode=self.retrieval_mode,
-
             ) 
-            self.logger.warning(f"The Collection named `{collection_name}` loaded.")
+            self.logger.warning(f"The Collection named `{name}` loaded.")
         else:
             self.vector_store = QdrantVectorStore.construct_instance(
-                embedding=embeddings,
-                sparse_embedding=sparse_embeddings,
-                collection_name=collection_name,
-                client_options={'port': port, 'host':host},
+                embedding=self.embeddings,
+                sparse_embedding=self.sparse_embeddings,
+                collection_name=name,
+                client_options={'port': self.port, 'host':self.host},
                 retrieval_mode=self.retrieval_mode,
             )
-            self.logger.info(f"As the collection `{collection_name}` is non-existant, it's created.")
+            self.logger.info(f"As the collection `{name}` is non-existant, it's created.")
 
 
-    async def async_search(self, query: str, top_k: int = 5) -> list[Document]:
-        return await self.vector_store.asimilarity_search(query, k=top_k)
+    async def async_search(self, query: str, top_k: int = 5, similarity_threshold: int=0.80) -> list[Document]:
+        docs_scores = await self.vector_store.asimilarity_search_with_relevance_scores(query=query, k=top_k, score_threshold=similarity_threshold)
+        docs = [doc for doc, score in docs_scores]
+        return docs
     
 
-    async def async_multy_query_search(self, queries: list[str], top_k_per_query: int = 5) -> list[Document]:
+    async def async_multy_query_search(self, queries: list[str], top_k_per_query: int = 5, similarity_threshold: int=0.80) -> list[Document]:
         # Gather all search tasks concurrently
-        search_tasks = [self.async_search(query=query, top_k=top_k_per_query) for query in queries]
+        search_tasks = [self.async_search(query=query, top_k=top_k_per_query, similarity_threshold=similarity_threshold) for query in queries]
         retrieved_results = await asyncio.gather(*search_tasks)
 
-        gc.collect()
-        torch.cuda.empty_cache()
+        s = sum(retrieved_results, [])
 
         retrieved_chunks = {}
         # Process the retrieved documents
         for retrieved in retrieved_results:
-            for document in retrieved:
-                retrieved_chunks[document.metadata["_id"]] = document
+            if retrieved:
+                for document in retrieved:
+                    retrieved_chunks[document.metadata["_id"]] = document
         
         return list(retrieved_chunks.values())
     
@@ -126,7 +146,6 @@ class QdrantDB(ABCVectorDB):
             max_concurrent_gpu_ops (int): Maximum number of concurrent GPU operations. Default: 5
             max_queued_batches (int): Number of batches to prepare ahead in queue. Default: 2
         """
-
         gpu_semaphore = asyncio.Semaphore(max_concurrent_gpu_ops) # Only allow max_concurrent_gpu_ops GPU operation at a time
         batch_queue = asyncio.Queue(maxsize=max_queued_batches)
 

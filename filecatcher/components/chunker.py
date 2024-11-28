@@ -1,16 +1,13 @@
 import re
-import asyncio
 from .llm import LLM
 from typing import Optional
-from abc import ABCMeta, abstractmethod, ABC
+from abc import abstractmethod, ABC
 from langchain_openai import ChatOpenAI
 from langchain_core.documents.base import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.embeddings import HuggingFaceBgeEmbeddings, HuggingFaceEmbeddings
-from langchain.callbacks import StdOutCallbackHandler
 from loguru import logger
-from langchain_core.runnables import RunnableLambda
 from omegaconf import OmegaConf
 
 
@@ -42,22 +39,27 @@ class ABCChunker(ABC):
 
 templtate = """
 <document>
-Title: {source} # Document title may contain key metadata (e.g., "employee_CVs_2024.pdf", "tutorial_videos_sql.mp4", "client_proposals_Q1.pdf")
-First page: {first_page}
-Previous chunk: {prev_chunk}
+Title: {source}  
+# The document title may contain key metadata (e.g., "cv", "videos", "client proposals").
+First page of the document: {first_page}  
+Previous chunk: {prev_chunk}  
 </document>
 
 <current_chunk>
 {chunk}
 </current_chunk>
 
-Provide a brief, one-sentence context that situates this chunk within the document, incorporating relevant context from:
-1. The document title (including any format, type, or category information encoded in the filename)
-2. First page content
-3. Previous chunk
-4. Current chunk content
+**Task:**  
+Provide a concise, one-sentence context that situates the *<current_chunk>* within the *<document>*, integrating relevant information from:  
+1. **Title** (e.g., type, or category information encoded in the filename).  
+2. **First page of the document**.  
+3. **Previous chunk**.  
+4. **Current chunk content**.  
 
-Response format: A complete and concise contextual sentence in the same language (french or english) as the <current_chunk>.
+**Response Format:**  
+- Only provide a single, concise contextual sentence for the *<current_chunk>*.  
+- Write the response in the **same language** as the current chunk to enhance retrieval quality.  
+- Do not include any additional text or explanation.  
 """
 
 
@@ -80,7 +82,7 @@ class ChunkContextualizer:
             b_contexts = self.context_generator\
                 .with_retry(
                     retry_if_exception_type=(Exception,),
-                    wait_exponential_jitter=True,
+                    wait_exponential_jitter=False,
                     stop_after_attempt=3
                 )\
                 .batch([
